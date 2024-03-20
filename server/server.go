@@ -2,9 +2,12 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 )
 
 func main() {
@@ -26,7 +29,7 @@ func main() {
 		return
 	}
 
-	listener, err := net.ListenTCP("tcp", addr)
+	listener, err := net.ListenTCP("tcp4", addr)
 	if err != nil {
 		fmt.Printf("Failed to create listener: %v\n", err)
 		return
@@ -35,35 +38,28 @@ func main() {
 
 	fmt.Printf("Server listening on port %d\n", port)
 
+	ctrlCChan := make(chan os.Signal, 1)
+	signal.Notify(ctrlCChan, os.Interrupt, syscall.SIGINT)
+
+	go waitConnections(listener)
+
+	<-ctrlCChan
+	fmt.Println("ctrl+c found, closing client connections...")
+
+}
+
+func waitConnections(listenConn *net.TCPListener) {
 	for {
-		conn, err := listener.AcceptTCP()
+		conn, err := listenConn.Accept()
 		if err != nil {
-			fmt.Printf("Failed to accept connection: %v\n", err)
-			continue
+			log.Fatalln("accept: ", err)
 		}
 
-		// Handle the connection in a new goroutine
-		go handleClient(conn, args[2:])
+		go handleClient(conn)
 	}
 }
 
-func handleClient(conn net.Conn, args []string) {
+func handleClient(conn net.Conn) {
 	defer conn.Close()
-	numStations := uint16(len(args) - 2)
 
-	buf := make([]byte, 3)
-	_, err := conn.Read(buf)
-	if err != nil {
-		fmt.Printf("Failed to read from client: %v\n", err)
-		return
-	}
-
-	welcome := []byte{2, byte(numStations >> 8), byte(numStations & 0xff)}
-	_, err = conn.Write(welcome)
-	if err != nil {
-		fmt.Printf("Failed to write to client: %v\n", err)
-		return
-	}
-
-	fmt.Printf("Client connected! The server has %d stations.\n", numStations)
 }
