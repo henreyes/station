@@ -43,7 +43,6 @@ func main() {
 
 	buffer := make([]byte, 1500)
 	for {
-
 		n, _, err := conn.ReadFromUDP(buffer)
 		if err != nil {
 			fmt.Println("Error reading from UDP:", err)
@@ -57,11 +56,15 @@ func main() {
 				continue
 			}
 
+			if _, err = os.Stdout.Write(buffer[:n]); err != nil {
+				fmt.Println("Error writing to stdout:", err)
+				continue
+			}
+
 			if err = outputFile.Sync(); err != nil {
 				fmt.Println("Error flushing output file:", err)
 				continue
 			}
 		}
-
 	}
 }
