@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"station/protocol"
@@ -36,22 +38,30 @@ func main() {
 		os.Exit(1)
 	}
 
-	welcomeBuf := make([]byte, 3)
-	n, err := conn.Read(welcomeBuf)
-	if err != nil {
-		fmt.Printf("Failed to read Welcome message: %v\n", err)
-		os.Exit(1)
-	}
-	if n != len(welcomeBuf) {
-		fmt.Println("Received incomplete Welcome message.")
-		os.Exit(1)
-	}
+	for {
+		var messageType uint8
+		err := binary.Read(conn, binary.BigEndian, &messageType)
+		if err != nil {
+			if err != io.EOF {
+				fmt.Printf("Error reading message type: %v\n", err)
+			}
+			return
+		}
 
-	numStations, err := protocol.ParseWelcomeMessage(welcomeBuf)
-	if err != nil {
-		fmt.Printf("Failed to parse Welcome message: %v\n", err)
-		os.Exit(1)
+		switch messageType {
+		case protocol.WelcomeReplyType:
+
+			var numStations uint16
+			err := binary.Read(conn, binary.BigEndian, &numStations)
+			if err != nil {
+				fmt.Printf("Error reading Welcome message data: %v\n", err)
+				break
+			}
+			fmt.Printf("Received Welcome message with %d stations\n", numStations)
+		default:
+			fmt.Printf("Unknown message type received: %d\n", messageType)
+
+		}
 	}
-	fmt.Printf("Received Welcome message with %d stations\n", numStations)
 
 }
