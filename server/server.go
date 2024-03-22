@@ -20,6 +20,11 @@ type Station struct {
 	Clients  map[string]int
 }
 
+type Client struct {
+	udpAddr *net.UDPAddr
+	udpConn *net.UDPConn
+}
+
 var stations []Station
 
 func main() {
@@ -64,7 +69,7 @@ func main() {
 	go waitConnections(listener)
 
 	<-ctrlCChan
-	fmt.Println("ctrl+c found, closing client connections...")
+	fmt.Println("ctrl+c found, closing client connections")
 
 }
 
@@ -82,6 +87,7 @@ func waitConnections(listenConn *net.TCPListener) {
 func handleClient(conn net.Conn) {
 	defer conn.Close()
 
+	var client Client
 	for {
 		var commandType uint8
 		err := binary.Read(conn, binary.BigEndian, &commandType)
@@ -94,13 +100,34 @@ func handleClient(conn net.Conn) {
 
 		switch commandType {
 		case protocol.HelloCommandType:
+
+			var udpPort uint16
+			err := binary.Read(conn, binary.BigEndian, &udpPort)
+			if err != nil {
+				log.Printf("Failed to read UDP port: %v", err)
+				return
+			}
+
+			fmt.Println("recieved message from client, ", udpPort)
+
+			client.udpAddr = &net.UDPAddr{
+				IP:   conn.RemoteAddr().(*net.TCPAddr).IP,
+				Port: int(udpPort),
+			}
+
+			client.udpConn, err = net.DialUDP("udp", nil, client.udpAddr)
+			if err != nil {
+				log.Printf("Error setting up UDP connection: %v", err)
+				return
+			}
+			defer client.udpConn.Close()
+
 			welcomeMsg := protocol.WelcomeMessage(uint16(len(stations)))
-			_, err := conn.Write(welcomeMsg)
+			_, err = conn.Write(welcomeMsg)
 			if err != nil {
 				log.Printf("Failed to send Welcome message: %v", err)
 				return
 			}
-
 		}
 	}
 
