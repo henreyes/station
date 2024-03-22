@@ -3,11 +3,13 @@ package main
 import (
 	"encoding/binary"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"station/protocol"
 	"strconv"
 	"syscall"
 )
@@ -24,7 +26,7 @@ func main() {
 
 	args := os.Args
 	if len(args) < 2 {
-		fmt.Println("Usage:  <listen_port>")
+		fmt.Println("Usage: <listen_port>")
 		return
 	}
 	port, err := strconv.Atoi(args[1])
@@ -80,22 +82,26 @@ func waitConnections(listenConn *net.TCPListener) {
 func handleClient(conn net.Conn) {
 	defer conn.Close()
 
-	var udpPort uint16
-	err := binary.Read(conn, binary.BigEndian, &udpPort)
-	if err != nil {
-		log.Printf("Failed to read UDP port: %v", err)
-		return
-	}
-	fmt.Printf("Received UDP port: %d\n", udpPort)
+	for {
+		var commandType uint8
+		err := binary.Read(conn, binary.BigEndian, &commandType)
+		if err != nil {
+			if err != io.EOF {
+				log.Printf("Error reading command type: %v", err)
+			}
+			break
+		}
 
-	buffer := make([]byte, 1024)
-	n, err := conn.Read(buffer)
-	if err != nil {
-		log.Printf("Failed to read message: %v", err)
-		return
-	}
+		switch commandType {
+		case protocol.HelloCommandType:
+			welcomeMsg := protocol.WelcomeMessage(uint16(len(stations)))
+			_, err := conn.Write(welcomeMsg)
+			if err != nil {
+				log.Printf("Failed to send Welcome message: %v", err)
+				return
+			}
 
-	message := string(buffer[:n])
-	fmt.Printf("Received message: %s\n", message)
+		}
+	}
 
 }
