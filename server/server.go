@@ -1,14 +1,24 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 )
+
+type Station struct {
+	Name     string
+	Filename string
+	Clients  map[string]int
+}
+
+var stations []Station
 
 func main() {
 
@@ -36,6 +46,14 @@ func main() {
 	}
 	defer listener.Close()
 
+	for _, filename := range args[2:] {
+		stations = append(stations, Station{
+			Name:     filepath.Base(filename),
+			Filename: filename,
+			Clients:  make(map[string]int),
+		})
+	}
+
 	fmt.Printf("Server listening on port %d\n", port)
 
 	ctrlCChan := make(chan os.Signal, 1)
@@ -61,5 +79,23 @@ func waitConnections(listenConn *net.TCPListener) {
 
 func handleClient(conn net.Conn) {
 	defer conn.Close()
+
+	var udpPort uint16
+	err := binary.Read(conn, binary.BigEndian, &udpPort)
+	if err != nil {
+		log.Printf("Failed to read UDP port: %v", err)
+		return
+	}
+	fmt.Printf("Received UDP port: %d\n", udpPort)
+
+	buffer := make([]byte, 1024)
+	n, err := conn.Read(buffer)
+	if err != nil {
+		log.Printf("Failed to read message: %v", err)
+		return
+	}
+
+	message := string(buffer[:n])
+	fmt.Printf("Received message: %s\n", message)
 
 }
