@@ -107,6 +107,7 @@ func handleClient(conn net.Conn) {
 				log.Printf("Failed to read UDP port: %v", err)
 				return
 			}
+			station := stations[0]
 
 			fmt.Println("recieved message from client, ", udpPort)
 
@@ -128,7 +129,45 @@ func handleClient(conn net.Conn) {
 				log.Printf("Failed to send Welcome message: %v", err)
 				return
 			}
+			go streamAudio(&client, station.Filename)
 		}
 	}
 
+}
+
+func streamAudio(client *Client, filename string) {
+
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Printf("Error opening audio file: %v", err)
+		return
+	}
+	defer file.Close()
+
+	buffer := make([]byte, 1024)
+	for {
+		fmt.Println("sending data to listener")
+
+		bytesRead, err := file.Read(buffer)
+		if err != nil {
+			if err == io.EOF {
+
+				_, err = file.Seek(0, 0)
+				if err != nil {
+					log.Printf("Error seeking audio file: %v", err)
+					return
+				}
+				continue
+			}
+			log.Printf("Error reading audio file: %v", err)
+			return
+		}
+
+		_, err = client.udpConn.Write(buffer[:bytesRead])
+		if err != nil {
+			log.Printf("Error sending UDP packet: %v", err)
+			return
+		}
+
+	}
 }
