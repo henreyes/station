@@ -1,13 +1,11 @@
 package main
 
 import (
-	"bufio"
-	"encoding/binary"
 	"fmt"
 	"net"
 	"os"
+	"station/protocol"
 	"strconv"
-	"strings"
 )
 
 func main() {
@@ -31,99 +29,29 @@ func main() {
 	}
 	defer conn.Close()
 
-	err = binary.Write(conn, binary.BigEndian, uint16(udpPort))
+	helloMsg := protocol.HelloMessage(uint16(udpPort))
+	_, err = conn.Write(helloMsg)
 	if err != nil {
-		fmt.Println("Failed to send Hello command:", err)
+		fmt.Println("Failed to send Hello message:", err)
 		os.Exit(1)
 	}
 
-	var numStations uint16
-	err = binary.Read(conn, binary.BigEndian, &numStations)
+	welcomeBuf := make([]byte, 3)
+	n, err := conn.Read(welcomeBuf)
 	if err != nil {
-		fmt.Println("Failed to read Welcome reply:", err)
+		fmt.Printf("Failed to read Welcome message: %v\n", err)
+		os.Exit(1)
+	}
+	if n != len(welcomeBuf) {
+		fmt.Println("Received incomplete Welcome message.")
 		os.Exit(1)
 	}
 
-	fmt.Printf("Welcome to the server! The server has %d stations.\n", numStations)
-
-	go receiveReplies(conn)
-
-	scanner := bufio.NewScanner(os.Stdin)
-	for {
-		fmt.Print("Enter a command (q to quit, number to set station): ")
-		if !scanner.Scan() {
-			break
-		}
-
-		input := scanner.Text()
-		input = strings.TrimSpace(input)
-
-		if input == "q" {
-			break
-		}
-
-		stationNumber, err := strconv.Atoi(input)
-		if err != nil {
-			fmt.Println("Invalid station number")
-			continue
-		}
-
-		err = binary.Write(conn, binary.BigEndian, uint16(stationNumber))
-		if err != nil {
-			fmt.Println("Failed to send SetStation command:", err)
-			break
-		}
+	numStations, err := protocol.ParseWelcomeMessage(welcomeBuf)
+	if err != nil {
+		fmt.Printf("Failed to parse Welcome message: %v\n", err)
+		os.Exit(1)
 	}
-}
+	fmt.Printf("Received Welcome message with %d stations\n", numStations)
 
-func receiveReplies(conn net.Conn) {
-	for {
-		var replyType uint8
-		err := binary.Read(conn, binary.BigEndian, &replyType)
-		if err != nil {
-			fmt.Println("Failed to read reply type:", err)
-			break
-		}
-
-		switch replyType {
-		case 3: // Announce
-			var songNameSize uint8
-			err := binary.Read(conn, binary.BigEndian, &songNameSize)
-			if err != nil {
-				fmt.Println("Failed to read song name size:", err)
-				break
-			}
-
-			songName := make([]byte, songNameSize)
-			_, err = conn.Read(songName)
-			if err != nil {
-				fmt.Println("Failed to read song name:", err)
-				break
-			}
-
-			fmt.Printf("New song announced: %s\n", string(songName))
-
-		case 4:
-			var replyStringSize uint8
-			err := binary.Read(conn, binary.BigEndian, &replyStringSize)
-			if err != nil {
-				fmt.Println("Failed to read reply string size:", err)
-				break
-			}
-
-			replyString := make([]byte, replyStringSize)
-			_, err = conn.Read(replyString)
-			if err != nil {
-				fmt.Println("Failed to read reply string:", err)
-				break
-			}
-
-			fmt.Printf("Invalid command: %s\n", string(replyString))
-			os.Exit(1)
-
-		default:
-			fmt.Printf("Unknown reply type: %d\n", replyType)
-			os.Exit(1)
-		}
-	}
 }
