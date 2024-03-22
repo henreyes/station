@@ -34,15 +34,34 @@ func main() {
 
 	fmt.Printf("Listening on UDP port %d\n", udpPort)
 
+	outputFile, err := os.Create("output.mp3")
+	if err != nil {
+		fmt.Println("Error creating output file:", err)
+		os.Exit(1)
+	}
+	defer outputFile.Close()
+
 	buffer := make([]byte, 1500)
 	for {
-		n, err := conn.Read(buffer)
+
+		n, _, err := conn.ReadFromUDP(buffer)
 		if err != nil {
 			fmt.Println("Error reading from UDP:", err)
 			continue
 		}
 
-		data := buffer[:n]
-		os.Stdout.Write(data)
+		if n > 0 {
+
+			if _, err = outputFile.Write(buffer[:n]); err != nil {
+				fmt.Println("Error writing to output file:", err)
+				continue
+			}
+
+			if err = outputFile.Sync(); err != nil {
+				fmt.Println("Error flushing output file:", err)
+				continue
+			}
+		}
+
 	}
 }
