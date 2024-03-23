@@ -11,21 +11,32 @@ import (
 	"path/filepath"
 	"station/protocol"
 	"strconv"
+	"sync"
 	"syscall"
+	"time"
 )
 
 type Station struct {
-	Name     string
-	Filename string
-	Clients  map[string]int
+	Name      string
+	Filename  string
+	Clients   map[*Client]struct{}
+	Broadcast chan []byte
+	sync.Mutex
 }
 
 type Client struct {
 	udpAddr *net.UDPAddr
 	udpConn *net.UDPConn
+	Station *Station
 }
 
-var stations []Station
+const (
+	targetRate = 16 * 1024
+	bufferSize = 1024
+	sleep      = time.Duration(float64(bufferSize) / float64(targetRate) * float64(time.Second))
+)
+
+var stations []*Station
 
 func main() {
 
@@ -52,14 +63,7 @@ func main() {
 		return
 	}
 	defer listener.Close()
-
-	for _, filename := range args[2:] {
-		stations = append(stations, Station{
-			Name:     filepath.Base(filename),
-			Filename: filename,
-			Clients:  make(map[string]int),
-		})
-	}
+	initStations(os.Args[2:])
 
 	fmt.Printf("Server listening on port %d\n", port)
 
@@ -99,6 +103,7 @@ func handleClient(conn net.Conn) {
 		}
 
 		switch commandType {
+
 		case protocol.HelloCommandType:
 
 			var udpPort uint16
@@ -107,9 +112,8 @@ func handleClient(conn net.Conn) {
 				log.Printf("Failed to read UDP port: %v", err)
 				return
 			}
-			station := stations[0]
 
-			fmt.Println("recieved message from client, ", udpPort)
+			fmt.Println("recieved hello message from client, ", udpPort)
 
 			client.udpAddr = &net.UDPAddr{
 				IP:   conn.RemoteAddr().(*net.TCPAddr).IP,
@@ -129,45 +133,93 @@ func handleClient(conn net.Conn) {
 				log.Printf("Failed to send Welcome message: %v", err)
 				return
 			}
-			go streamAudio(&client, station.Filename)
+
+		case protocol.SetStationType:
+			data := make([]byte, 5)
+			_, err := conn.Read(data)
+			if err != nil {
+				log.Printf("Error reading SetStation message: %v", err)
+				return
+			}
+
+			fmt.Println("recieved set station message, ", data)
+			stationIndex, err := protocol.ParseSetStationMessage(data)
+			if err != nil {
+				log.Printf("Error parsing SetStation message: %v", err)
+				return
+			}
+
+			if stationIndex < 0 || int(stationIndex) >= len(stations) {
+				log.Printf("Invalid station index received: %d", stationIndex)
+				return
+			}
+
+			selectedStation := stations[stationIndex]
+
+			if client.Station != nil {
+				client.Station.Lock()
+				delete(client.Station.Clients, &client)
+				client.Station.Unlock()
+			}
+			client.Station = selectedStation
+			selectedStation.Lock()
+			selectedStation.Clients[&client] = struct{}{}
+			selectedStation.Unlock()
+
+			confirmMsg := protocol.SetStationMessage(stationIndex)
+			_, err = conn.Write(confirmMsg)
+			if err != nil {
+				log.Printf("Failed to send station changed confirmation: %v", err)
+				return
+			}
+
 		}
+
 	}
 
 }
 
-func streamAudio(client *Client, filename string) {
+func initStations(filenames []string) {
+	for _, filename := range filenames {
+		station := &Station{
+			Name:      filepath.Base(filename),
+			Filename:  filename,
+			Clients:   make(map[*Client]struct{}),
+			Broadcast: make(chan []byte, bufferSize),
+		}
+		stations = append(stations, station)
+		go station.startBroadcast()
+	}
+}
 
-	file, err := os.Open(filename)
+func (s *Station) startBroadcast() {
+	file, err := os.Open(s.Filename)
 	if err != nil {
-		log.Printf("Error opening audio file: %v", err)
+		log.Printf("Failed to open file %s: %v", s.Filename, err)
 		return
 	}
 	defer file.Close()
 
-	buffer := make([]byte, 1024)
+	buffer := make([]byte, bufferSize)
 	for {
-		fmt.Println("sending data to listener")
-
 		bytesRead, err := file.Read(buffer)
 		if err != nil {
 			if err == io.EOF {
-
-				_, err = file.Seek(0, 0)
-				if err != nil {
-					log.Printf("Error seeking audio file: %v", err)
-					return
-				}
+				file.Seek(0, 0)
 				continue
 			}
-			log.Printf("Error reading audio file: %v", err)
+			log.Printf("Failed to read file %s: %v", s.Filename, err)
 			return
 		}
 
-		_, err = client.udpConn.Write(buffer[:bytesRead])
-		if err != nil {
-			log.Printf("Error sending UDP packet: %v", err)
-			return
+		s.Lock()
+		for client := range s.Clients {
+			if _, err := client.udpConn.Write(buffer[:bytesRead]); err != nil {
+				log.Printf("Failed to send to client: %v", err)
+				delete(s.Clients, client)
+			}
 		}
-
+		s.Unlock()
+		time.Sleep(sleep)
 	}
 }
