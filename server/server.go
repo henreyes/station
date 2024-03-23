@@ -96,10 +96,13 @@ func handleClient(conn net.Conn) {
 		var commandType uint8
 		err := binary.Read(conn, binary.BigEndian, &commandType)
 		if err != nil {
-			if err != io.EOF {
-				log.Printf("Error reading command type: %v", err)
+			if err == io.EOF {
+				fmt.Println("Client closed the connection")
+				return
+			} else {
+				log.Printf("Error reading message type: %v", err)
+				return
 			}
-			break
 		}
 
 		switch commandType {
@@ -135,15 +138,18 @@ func handleClient(conn net.Conn) {
 			}
 
 		case protocol.SetStationType:
-			data := make([]byte, 5)
-			_, err := conn.Read(data)
+			buffer := make([]byte, 4)
+			_, err := io.ReadFull(conn, buffer)
 			if err != nil {
-				log.Printf("Error reading SetStation message: %v", err)
-				return
+				if err == io.EOF {
+					log.Println("Client closed the connection while expecting SetStationType message")
+					return
+				} else {
+					log.Printf("Error reading SetStation message: %v", err)
+					return
+				}
 			}
-
-			fmt.Println("recieved set station message, ", data)
-			stationIndex, err := protocol.ParseSetStationMessage(data)
+			stationIndex, err := protocol.ParseSetStationMessage(buffer)
 			if err != nil {
 				log.Printf("Error parsing SetStation message: %v", err)
 				return
@@ -218,6 +224,7 @@ func (s *Station) startBroadcast() {
 				log.Printf("Failed to send to client: %v", err)
 				delete(s.Clients, client)
 			}
+			fmt.Println("sending data to listener")
 		}
 		s.Unlock()
 		time.Sleep(sleep)
