@@ -14,13 +14,22 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/dhowden/tag"
 )
+
+type Metadata struct {
+	Title  string
+	Artist string
+	Album  string
+}
 
 type Station struct {
 	Name      string
 	Filename  string
 	Clients   map[*Client]struct{}
 	Broadcast chan []byte
+	MetaData  Metadata
 	sync.Mutex
 }
 
@@ -35,6 +44,25 @@ const (
 	bufferSize = 1024
 	sleep      = time.Duration(float64(bufferSize) / float64(targetRate) * float64(time.Second))
 )
+
+func ExtractMetadata(filePath string) (Metadata, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return Metadata{}, err
+	}
+	defer file.Close()
+
+	metadata, err := tag.ReadFrom(file)
+	if err != nil {
+		return Metadata{}, err
+	}
+
+	return Metadata{
+		Title:  metadata.Title(),
+		Artist: metadata.Artist(),
+		Album:  metadata.Album(),
+	}, nil
+}
 
 var stations []*Station
 
@@ -187,11 +215,18 @@ func handleClient(conn net.Conn) {
 
 func initStations(filenames []string) {
 	for _, filename := range filenames {
+		md, err := ExtractMetadata(filename)
+		if err != nil {
+			fmt.Println("failed to extract metadata")
+			continue
+		}
+		fmt.Println("[METADATA]:", md)
 		station := &Station{
 			Name:      filepath.Base(filename),
 			Filename:  filename,
 			Clients:   make(map[*Client]struct{}),
 			Broadcast: make(chan []byte, bufferSize),
+			MetaData:  md,
 		}
 		stations = append(stations, station)
 		go station.startBroadcast()
