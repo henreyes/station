@@ -18,18 +18,12 @@ import (
 	"github.com/dhowden/tag"
 )
 
-type Metadata struct {
-	Title  string
-	Artist string
-	Album  string
-}
-
 type Station struct {
 	Name      string
 	Filename  string
 	Clients   map[*Client]struct{}
 	Broadcast chan []byte
-	MetaData  Metadata
+	MetaData  protocol.Metadata
 	sync.Mutex
 }
 
@@ -44,25 +38,6 @@ const (
 	bufferSize = 1024
 	sleep      = time.Duration(float64(bufferSize) / float64(targetRate) * float64(time.Second))
 )
-
-func ExtractMetadata(filePath string) (Metadata, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return Metadata{}, err
-	}
-	defer file.Close()
-
-	metadata, err := tag.ReadFrom(file)
-	if err != nil {
-		return Metadata{}, err
-	}
-
-	return Metadata{
-		Title:  metadata.Title(),
-		Artist: metadata.Artist(),
-		Album:  metadata.Album(),
-	}, nil
-}
 
 var stations []*Station
 
@@ -79,7 +54,7 @@ func main() {
 		return
 	}
 
-	addr, err := net.ResolveTCPAddr("tcp", "127.0.0.1:"+strconv.Itoa(port))
+	addr, err := net.ResolveTCPAddr("tcp4", "127.0.0.1:"+strconv.Itoa(port))
 	if err != nil {
 		fmt.Printf("Failed to resolve TCP address: %v\n", err)
 		return
@@ -189,6 +164,14 @@ func handleClient(conn net.Conn) {
 			}
 
 			selectedStation := stations[stationIndex]
+			metadata := selectedStation.MetaData
+
+			metadataMsg := protocol.MetadataMessage(metadata.Title, metadata.Artist, metadata.Album)
+			_, err = conn.Write(metadataMsg)
+			if err != nil {
+				log.Printf("Failed to send metadata to client: %v", err)
+				return
+			}
 
 			if client.Station != nil {
 				client.Station.Lock()
@@ -221,15 +204,15 @@ func initStations(filenames []string) {
 			continue
 		}
 		fmt.Println("[METADATA]:", md)
-		station := &Station{
+		entry := &Station{
 			Name:      filepath.Base(filename),
 			Filename:  filename,
 			Clients:   make(map[*Client]struct{}),
 			Broadcast: make(chan []byte, bufferSize),
 			MetaData:  md,
 		}
-		stations = append(stations, station)
-		go station.startBroadcast()
+		stations = append(stations, entry)
+		go entry.startBroadcast()
 	}
 }
 
@@ -259,9 +242,28 @@ func (s *Station) startBroadcast() {
 				log.Printf("Failed to send to client: %v", err)
 				delete(s.Clients, client)
 			}
-			fmt.Println("sending data to listener")
+			//fmt.Println("sending data to listener")
 		}
 		s.Unlock()
 		time.Sleep(sleep)
 	}
+}
+
+func ExtractMetadata(filePath string) (protocol.Metadata, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return protocol.Metadata{}, err
+	}
+	defer file.Close()
+
+	metadata, err := tag.ReadFrom(file)
+	if err != nil {
+		return protocol.Metadata{}, err
+	}
+
+	return protocol.Metadata{
+		Title:  metadata.Title(),
+		Artist: metadata.Artist(),
+		Album:  metadata.Album(),
+	}, nil
 }
