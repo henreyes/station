@@ -60,6 +60,15 @@ func main() {
 					break
 				}
 				fmt.Printf("Welcome to the radio. There are %d stations\n", numStations)
+			case protocol.MetadataType:
+				metadata, err := protocol.ParseMetadataMessage(conn)
+				if err != nil {
+					fmt.Printf("Error parsing metadata: %v\n", err)
+					continue
+				}
+
+				fmt.Printf("Now playing: '%s' \n",
+					metadata.Title)
 			default:
 				fmt.Printf("Unknown message type received: %d\n", messageType)
 
